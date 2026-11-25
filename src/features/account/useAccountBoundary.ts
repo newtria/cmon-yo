@@ -1,12 +1,14 @@
 import { clearRecovery } from '../recovery/storage';
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { accountSchema } from '../../contracts/account';
+import { ViewerVerification } from './ViewerVerification';
 
 // Private UI is hidden during external identity validation. Requests from the
 // old document are cancelled, and late callbacks cannot mount a new account.
 export function useAccountBoundary(userId: string | null) {
   const client = useQueryClient();
+  const verified = useContext(ViewerVerification);
   const [ready, setReady] = useState(true);
   useEffect(() => {
     let alive = true;
@@ -17,7 +19,7 @@ export function useAccountBoundary(userId: string | null) {
       client.removeQueries({ queryKey: ['private'] });
     };
     const changed = () => {
-      clearRecovery();
+      clearRecovery(userId);
       clear();
       window.location.reload();
     };
@@ -67,5 +69,5 @@ export function useAccountBoundary(userId: string | null) {
       document.removeEventListener('visibilitychange', visibility);
     };
   }, [client, userId]);
-  return ready;
+  return ready && verified;
 }

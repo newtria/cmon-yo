@@ -373,7 +373,7 @@ function MeetingActions({
   const id = route.id!,
     client = useQueryClient(),
     ready = useAccountBoundary(route.userId);
-  const [editing, setEditing] = useState(false),
+  const [editing, setEditing] = useState<Meeting | null>(null),
     [confirm, setConfirm] = useState<'leave' | 'cancel' | null>(null);
   const member = useQuery({
     queryKey: membershipKey(route.userId, id),
@@ -395,10 +395,10 @@ function MeetingActions({
     setConfirm(null);
     await Promise.all([query.refetch(), route.userId ? member.refetch() : Promise.resolve()]);
   };
-  const command = useMeetingCommand(route.userId, 'membership:' + id, ready, async () => {
+  const command = useMeetingCommand(route.userId, 'membership:' + id, ready, async (_id, current) => {
     await client.invalidateQueries({ queryKey: ['private', route.userId, 'meetings'] });
     await client.invalidateQueries({ queryKey: ['meetings', 'list'] });
-    await refresh();
+    if (current()) await refresh();
   });
   const active = m && summary(m) === '모집 중';
   const mutable = m && m.status === 'open' && new Date(m.startsAt).getTime() > Date.now();
@@ -427,8 +427,8 @@ function MeetingActions({
       ) : null}
       {!route.userId ? (
         <Login returnTo={`/meetups/${id}`} />
-      ) : ready ? (
-        <>
+      ) : (
+        <div hidden={!ready}>
           {member.isError ? (
             <p role="alert">참여 상태를 확인하지 못했습니다. 현재 상태를 다시 조회해 주세요.</p>
           ) : null}
@@ -437,7 +437,7 @@ function MeetingActions({
               <p>내가 주최한 모임입니다.</p>
               {mutable ? (
                 <div className={css.actions}>
-                  <button disabled={!safe} onClick={() => setEditing(!editing)}>
+                  <button disabled={!safe} onClick={() => setEditing(editing ? null : m)}>
                     모임 수정
                   </button>
                   <button disabled={!safe} onClick={() => setConfirm('cancel')}>
@@ -473,23 +473,29 @@ function MeetingActions({
               <button onClick={() => setConfirm(null)}>유지하기</button>
             </div>
           ) : null}
-          {editing && member.data?.role === 'host' ? (
-            <Suspense fallback={<p role="status">양식을 불러오는 중…</p>}>
-              <MeetingEditor
-                userId={route.userId}
-                initial={m}
-                ready={safe}
-                onSaved={async () => {
-                  setEditing(false);
-                  await refresh();
-                }}
-              />
-            </Suspense>
+          {editing ? (
+            <div hidden={member.data?.role !== 'host'}>
+              <Suspense fallback={<p role="status">양식을 불러오는 중…</p>}>
+                <MeetingEditor
+                  userId={route.userId}
+                  initial={editing}
+                  ready={safe && member.data?.role === 'host'}
+                  onSaved={async () => {
+                    setEditing(null);
+                    await refresh();
+                  }}
+                />
+              </Suspense>
+            </div>
           ) : null}
-        </>
-      ) : (
-        <p role="status">계정을 확인하는 중…</p>
+        </div>
       )}
+      {route.userId && !ready ? (
+        <p role="status">
+          계정을 확인하지 못했거나 확인 중입니다.{' '}
+          <button onClick={() => window.dispatchEvent(new Event('focus'))}>계정 다시 확인</button>
+        </p>
+      ) : null}
       {command.feedback}
       <button
         disabled={!ready || query.isFetching || command.pending}

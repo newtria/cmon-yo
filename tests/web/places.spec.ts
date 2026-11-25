@@ -15,7 +15,9 @@ test('facility search narrows real rows, explains no results and preserves navig
   ).toBeVisible();
   await search.fill('근린공원 36');
   await page.getByRole('link', { name: '근린공원 36', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '근린공원 36', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { level: 1, name: '근린공원 36', exact: true }),
+  ).toBeVisible();
   await page.getByRole('link', { name: '시설 목록으로 돌아가기', exact: true }).click();
   await expect(page.getByRole('searchbox')).toHaveValue('');
 });
@@ -43,7 +45,7 @@ test('HTTP client rejects malformed success data without replacing the last vali
     }),
   );
   await retry.click();
-  await expect(page.getByRole('alert')).toHaveText(
+  await expect(page.getByRole('main').getByRole('alert')).toHaveText(
     '시설을 불러오지 못했습니다. 다시 시도해 주세요.',
   );
   await expect(
@@ -54,7 +56,7 @@ test('HTTP client rejects malformed success data without replacing the last vali
   expect(requests).toBe(1);
   await page.unroute(`**/api/v1/places/${id}/info`);
   await retry.click();
-  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);
   await expect(
     page.getByText('이전에 불러온 정보입니다. 최신 정보를 확인하지 못했습니다.'),
   ).toHaveCount(0);
@@ -167,7 +169,7 @@ test('map pins follow search and keyboard selection opens the matching facility 
   await expect(page.getByText('지도를 불러오는 중… 시설 목록도 이용할 수 있습니다.')).toHaveCount(
     0,
   );
-  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);
   await search.fill('근린공원 36');
   await expect(map.getByRole('button', { name: /지도 핀$/ })).toHaveCount(1);
   const pin = map.getByRole('button', { name: '근린공원 36 지도 핀', exact: true });
@@ -197,7 +199,10 @@ test('device location permission adds the actual position marker without hiding 
   await page.context().grantPermissions(['geolocation'], { origin: baseURL });
   await page.context().setGeolocation({ latitude: 37.5665, longitude: 126.978 });
   await page.goto('/places');
-  await expect(page.getByRole('img', { name: '현재 위치' })).toBeVisible();
+  await expect(page.getByRole('img', { name: '현재 위치' })).toHaveCount(0);
+  await page.getByRole('button', { name: '내 위치 찾기' }).click();
+  await expect(page.getByRole('img', { name: /^(현재 위치|조회 기준 위치)$/ })).toBeVisible();
+  await expect(page).toHaveURL(/latitude=37\.5665&longitude=126\.978/);
   await expect(page.getByRole('button', { name: '내 위치 찾기' })).toBeVisible();
   await expect(page.getByRole('link', { name: '근린공원 36', exact: true })).toBeVisible();
 });
@@ -205,11 +210,11 @@ test('device location permission adds the actual position marker without hiding 
 test('tile failure leaves facility access intact and map retry recovers', async ({ page }) => {
   await page.route('https://tiles.openfreemap.org/**', (route) => route.abort());
   await page.goto('/places');
-  await expect(page.getByRole('alert')).toContainText('지도 배경을 불러오지 못했습니다.');
+  await expect(page.getByRole('main').getByRole('alert')).toContainText('지도 배경을 불러오지 못했습니다.');
   await expect(page.getByRole('link', { name: '근린공원 36', exact: true })).toBeVisible();
   await page.unroute('https://tiles.openfreemap.org/**');
   await page.getByRole('button', { name: '지도 다시 불러오기' }).click();
-  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);
   const pin = page.getByRole('button', { name: '운남공원 지도 핀', exact: true });
   await pin.click();
   await expect(page.getByLabel('선택한 시설')).toContainText('운남공원');

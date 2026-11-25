@@ -1,13 +1,15 @@
+import { useLocation } from 'react-router';
+import { placeIdSchema, regionOfPlace } from '../../contracts/place';
 import { useDraft } from '../recovery/useDraft';
 import { postDraftScope, postDraftSchema } from './postDraft';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
-import { placeListSchema, placesKey } from '../../contracts/place';
-import { RegionSelect } from '../places/RegionSelect';
 import { meetingListSchema, meetingListKey } from '../../contracts/meetings';
 import { postInputSchema, type Post } from '../../contracts/community';
 import { meetingRequest } from '../../api/meetings';
+import { RegionSelect } from '../places/RegionSelect';
+import { PlacePicker } from '../places/PlacePicker';
 import { form } from '../account/account.css';
 import { primary } from '../meetup/meetup.css';
 const sports = { walking: '걷기', running: '달리기', cycling: '자전거' };
@@ -22,6 +24,9 @@ export function PostEditor({
   disabled: boolean;
   submit: (input: z.infer<typeof postInputSchema>, version: number | null) => Promise<boolean>;
 }) {
+  const location = useLocation();
+  const linkedPlace = placeIdSchema.safeParse(new URLSearchParams(location.search).get('placeId'));
+  const initialPlace = !post && linkedPlace.success ? linkedPlace.data : '';
   const bodyId = 'post-body-' + (post?.id ?? 'new');
   const draft = useDraft(
     userId,
@@ -30,8 +35,8 @@ export function PostEditor({
       title: post?.title ?? '',
       body: post?.body ?? '',
       sport: post?.sport ?? 'walking',
-      regionCode: post?.regionCode ?? '',
-      placeId: post?.placeId ?? '',
+      regionCode: post?.regionCode ?? (initialPlace ? regionOfPlace(initialPlace) : ''),
+      placeId: post?.placeId ?? initialPlace,
       meetupId: post?.meetupId ?? '',
       version: post?.version ?? null,
     },
@@ -41,15 +46,14 @@ export function PostEditor({
   const [preview, setPreview] = useState(false),
     [error, setError] = useState('');
   const locked = disabled || !draft.hydrated;
-  const places = useQuery({
-    queryKey: placesKey,
-    queryFn: ({ signal }) => meetingRequest('/api/v1/places', placeListSchema, { signal }),
-    staleTime: 30000,
-    retry: false,
-  });
   const meetings = useQuery({
-    queryKey: meetingListKey({ page: 0 }),
-    queryFn: ({ signal }) => meetingRequest('/api/v1/meetups', meetingListSchema, { signal }),
+    queryKey: meetingListKey({ regionCode: regionCode || undefined, page: 0 }),
+    queryFn: ({ signal }) =>
+      meetingRequest(
+        '/api/v1/meetups' + (regionCode ? '?regionCode=' + regionCode : ''),
+        meetingListSchema,
+        { signal },
+      ),
     staleTime: 30000,
     retry: false,
   });
@@ -118,21 +122,13 @@ export function PostEditor({
       />
       <details>
         <summary>관련 시설·모임 (선택)</summary>
-        <label>
-          관련 시설
-          <select
-            disabled={locked}
-            value={placeId}
-            onChange={(e) => draft.update({ ...draft.value, placeId: e.target.value })}
-          >
-            <option value="">연결하지 않음</option>
-            {places.data?.places.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <PlacePicker
+          label="관련 시설"
+          optional
+          disabled={locked}
+          value={placeId}
+          onChange={(value) => draft.update({ ...draft.value, placeId: value })}
+        />
         <label>
           관련 모임
           <select
@@ -152,13 +148,12 @@ export function PostEditor({
           </select>
         </label>
       </details>
-      {places.error || meetings.error ? (
+      {meetings.error ? (
         <p role="alert">
           관련 장소·모임을 불러오지 못했습니다.{' '}
           <button
             type="button"
             onClick={() => {
-              void places.refetch();
               void meetings.refetch();
             }}
           >

@@ -1,5 +1,6 @@
+import { migrateDatabase } from '../migrations';
+import { lockVerifiedAccount } from '../auth/account-lock';
 import { randomUUID, createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import type pg from 'pg';
 import {
   postSchema,
@@ -34,18 +35,7 @@ const post = (r: pg.QueryResultRow) =>
     meetupId: r.meetup_id,
   });
 export async function migrateCommunity(pool: pg.Pool) {
-  const c = await pool.connect();
-  try {
-    await c.query('BEGIN');
-    await c.query('SELECT pg_advisory_xact_lock(15012892)');
-    await c.query(await readFile('db/003_community.sql', 'utf8'));
-    await c.query('COMMIT');
-  } catch (e) {
-    await c.query('ROLLBACK');
-    throw e;
-  } finally {
-    c.release();
-  }
+  await migrateDatabase(pool, 3);
 }
 export function databaseCommunity(pool: pg.Pool) {
   const parent = async (
@@ -160,6 +150,9 @@ export function databaseCommunity(pool: pg.Pool) {
         await c.query('BEGIN');
         // One user lock covers both replay and the per-user write budget.
         await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,3))', [user]);
+        // Serialize profile writers before taking a shared account lock: their
+        // later name update must not race another lock upgrade for this user.
+        await lockVerifiedAccount(c, user);
         const prior = (
           await c.query('SELECT * FROM community_commands WHERE user_id=$1 AND command_id=$2', [
             user,

@@ -1,5 +1,31 @@
 import { test, expect, type BrowserContext } from '../web/fixtures';
 const id = 'park-46840-00023';
+test('identity verification preserves public search input and focus from the SSR screen', async ({ page }) => {
+  let release = () => {};
+  let started = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const verifying = new Promise<void>((resolve) => { started = resolve; });
+  await page.route('**/api/v1/me', async (route) => {
+    started();
+    await held;
+    await route.continue();
+  });
+  try {
+    await page.goto('/places', { waitUntil: 'commit' });
+    await verifying;
+    const search = page.getByRole('searchbox', { name: '시설 이름·주소 검색' });
+    await search.fill('근린');
+    await search.focus();
+    release();
+    await expect(page.getByRole('button', { name: '근린공원 36 찜하기', exact: true })).toBeEnabled();
+    await expect(search).toHaveValue('근린');
+    await expect(search).toBeFocused();
+  } finally {
+    release();
+    await page.unroute('**/api/v1/me');
+  }
+});
+
 test('the related meeting link works while the original SSR weather stream is still held', async ({
   page,
   request,
@@ -118,12 +144,14 @@ test('production streamed weather, independent recovery, late navigation and cac
   await expect(page.getByText('최근에 받은 예보입니다.')).toBeVisible();
   await expect(related).toBeFocused();
   await expect(page.locator('section[aria-label="날씨"]')).toHaveCount(1);
-  // Personal favorites load independently; public facility and weather data
-  // must still come from the streamed response without duplicate API reads.
+  // Session and personal favorites load independently of the streamed public data.
   expect(
-    requests.filter(
-      (u) => u.includes('/api/') && new URL(u).pathname !== '/api/v1/me/place-favorites',
-    ),
+    requests.filter((url) => {
+      const { pathname } = new URL(url);
+      return pathname.startsWith('/api/') &&
+        pathname !== '/api/v1/me' &&
+        pathname !== '/api/v1/me/place-favorites';
+    }),
   ).toEqual([]);
   await page.screenshot({ path: info.outputPath('weather-released.png') });
   // Retry changes just the weather query. Facility node and focus survive.
@@ -232,7 +260,7 @@ test('public meeting shell with held personal state stays request-isolated and h
     await expect(host.getByRole('button', { name: '모임 수정', exact: true })).toBeEnabled();
     await expect(guest.getByRole('button', { name: '참여하기', exact: true })).toBeEnabled();
     await expect(guest.getByText('내가 주최한 모임입니다.')).toHaveCount(0);
-    expect(calls).toEqual([]);
+    expect(calls.map((url) => new URL(url).pathname)).toEqual(['/api/v1/me', '/api/v1/me']);
     expect(errors).toEqual([]);
   } finally {
     await request.post('/_perf/control', { data: { holdMembership: false, releaseViewers: true } });

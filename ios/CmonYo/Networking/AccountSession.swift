@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Observation
 import Security
@@ -42,6 +43,28 @@ protocol SessionCredentialStore {
   func save(_ token: String?) throws
 }
 struct SessionVault: SessionCredentialStore {
+  private let storage: any SessionCredentialStore
+  private let defaults: UserDefaults
+  private let logoutKey: String
+  init(origin: String, storage: (any SessionCredentialStore)? = nil, defaults: UserDefaults = .standard) {
+    self.storage = storage ?? KeychainSessionStore(origin: origin)
+    self.defaults = defaults
+    let digest = SHA256.hash(data: Data(origin.utf8)).map { String(format: "%02x", $0) }.joined()
+    logoutKey = "app.heznpc.cmonyo.session.signed-out." + digest
+  }
+  func read() throws -> String? {
+    // A failed Keychain deletion must not undo a local logout on the next launch.
+    guard !defaults.bool(forKey: logoutKey) else { return nil }
+    return try storage.read()
+  }
+  func save(_ token: String?) throws {
+    if token == nil { defaults.set(true, forKey: logoutKey) }
+    try storage.save(token)
+    // Only a successfully stored new credential permits automatic restoration.
+    if token != nil { defaults.removeObject(forKey: logoutKey) }
+  }
+}
+private struct KeychainSessionStore: SessionCredentialStore {
   let origin: String
   private var query: [String: Any] { [kSecClass as String: kSecClassGenericPassword,
     kSecAttrService as String: "app.heznpc.cmonyo.session", kSecAttrAccount as String: origin] }
@@ -75,7 +98,9 @@ final class AccountSession {
   private(set) var restoring = true
   var notice: String?
   private var token: String?
-  private(set) var discussionDataStore = WKWebsiteDataStore.nonPersistent()
+  private var retryCredentialRestore = false
+  private(set) var webSessionDataStore = WKWebsiteDataStore.nonPersistent()
+  var discussionDataStore: WKWebsiteDataStore { webSessionDataStore }
   private var transport: URLSession
   private let vault: any SessionCredentialStore
   init(baseURL: URL, credentialStore: (any SessionCredentialStore)? = nil) {
@@ -103,7 +128,7 @@ final class AccountSession {
     if authenticated, let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
     if let commandID {
       request.setValue(commandID, forHTTPHeaderField: "Idempotency-Key")
-      request.setValue(user?.id, forHTTPHeaderField: "X-Cmon-User")
+      request.setValue(user?.id.lowercased(), forHTTPHeaderField: "X-Cmon-User")
     }
     let data: Data; let response: URLResponse
     do { (data, response) = try await transport.data(for: request) }
@@ -121,10 +146,21 @@ final class AccountSession {
   func restore() async {
     guard restoring else { return }
     defer { restoring = false }
-    do { token = try vault.read(); if token != nil { try await refreshAccount() } }
+    do {
+      do { token = try vault.read() }
+      catch { retryCredentialRestore = true; throw error }
+      if token != nil { try await refreshAccount() }
+    }
+    catch is CancellationError { return }
     catch { notice = error.localizedDescription }
   }
   func refreshAccount() async throws {
+    // A locked-device cold launch may fail to read WhenUnlocked credentials.
+    // Retry that initial restore after unlock; logout never enables this retry.
+    if retryCredentialRestore {
+      token = try vault.read()
+      retryCredentialRestore = false
+    }
     guard token != nil else { return }
     let response: AccountResponse = try await request("api/v1/me")
     guard let next = response.user, UUID(uuidString: next.id) != nil, next.emailVerified else { try clear(); throw ProductError(status: 401, code: "UNAUTHENTICATED") }
@@ -133,13 +169,20 @@ final class AccountSession {
   }
   func login(email: String, password: String) async throws {
     let credential: NativeCredential = try await request("api/native/auth/sign-in/email", method: "POST", body: JSONEncoder().encode(["email": email, "password": password]), authenticated: false)
+    guard !credential.token.isEmpty, !credential.token.contains(where: { $0.isWhitespace || $0.isNewline }) else {
+      throw ProductError(status: 0, code: "RESPONSE")
+    }
     try vault.save(credential.token)
-    discussionDataStore = WKWebsiteDataStore.nonPersistent()
-    generation += 1; token = credential.token
+    retryCredentialRestore = false
+    webSessionDataStore = WKWebsiteDataStore.nonPersistent()
+    // A new credential must never be paired with the previous account identity.
+    if user != nil { privacyEpoch += 1 }
+    user = nil; generation += 1; token = credential.token
+    transport.invalidateAndCancel(); transport = Self.makeTransport()
     try await refreshAccount()
     notice = nil
   }
-  func prepareDiscussion() async throws -> WKWebsiteDataStore {
+  func prepareWebSession() async throws -> WKWebsiteDataStore {
     let epoch = generation
     let config: WebSessionConfiguration = try await request("api/native/web-session", method: "POST", body: Data("{}".utf8))
     guard epoch == generation, config.userId == user?.id, let token,
@@ -153,11 +196,13 @@ final class AccountSession {
     ]
     if config.secure { properties[.secure] = "TRUE" }
     guard let cookie = HTTPCookie(properties: properties), cookie.isHTTPOnly, cookie.isSecure == config.secure else { throw ProductError(status: 0, code: "RESPONSE") }
-    let store = discussionDataStore
+    let store = webSessionDataStore
     await store.httpCookieStore.setCookie(cookie)
     guard epoch == generation else { throw CancellationError() }
+    try Task.checkCancellation()
     return store
   }
+  func prepareDiscussion() async throws -> WKWebsiteDataStore { try await prepareWebSession() }
   func emailAction(_ action: String, email: String, password: String = "", name: String = "") async throws {
     var body = ["email": email]
     if action == "sign-up/email" { body["password"] = password; body["name"] = name; body["callbackURL"] = "/account" }
@@ -166,13 +211,18 @@ final class AccountSession {
     let _: ActionResult = try await request("api/native/auth/\(action)", method: "POST", body: JSONEncoder().encode(body), authenticated: false)
   }
   func logout() async {
+    let epoch = generation
     do { let _: ActionResult = try await request("api/native/auth/sign-out", method: "POST", body: Data("{}".utf8)) }
-    catch { notice = "서버 로그아웃 응답을 확인하지 못했습니다. 이 기기의 로그인 정보를 제거합니다." }
+    catch {
+      guard epoch == generation else { return }
+      notice = "서버 로그아웃 응답을 확인하지 못했습니다. 이 기기의 로그인 정보를 제거합니다."
+    }
+    guard epoch == generation else { return }
     do { try clear() } catch { notice = error.localizedDescription }
   }
   private func clear() throws {
-    discussionDataStore = WKWebsiteDataStore.nonPersistent()
-    user = nil; token = nil; generation += 1; privacyEpoch += 1
+    webSessionDataStore = WKWebsiteDataStore.nonPersistent()
+    user = nil; token = nil; retryCredentialRestore = false; generation += 1; privacyEpoch += 1
     transport.invalidateAndCancel(); transport = Self.makeTransport()
     try vault.save(nil)
   }

@@ -14,22 +14,22 @@ export default defineConfig({
     },
     {
       name: 'meetings-development',
-      testMatch: ['meetings.spec.ts', 'community.spec.ts', 'regions.spec.ts'],
+      testMatch: ['meetings.spec.ts', 'community.spec.ts', 'regions.spec.ts', 'walking.spec.ts'],
       use: { baseURL: 'http://127.0.0.1:3115' },
     },
     {
       name: 'meetings-production',
-      testMatch: ['meetings.spec.ts', 'community.spec.ts', 'regions.spec.ts'],
+      testMatch: ['meetings.spec.ts', 'community.spec.ts', 'regions.spec.ts', 'walking.spec.ts'],
       use: { baseURL: 'http://127.0.0.1:3116' },
     },
     {
       name: 'development',
-      testIgnore: ['account.spec.ts', 'meetings.spec.ts', 'community.spec.ts', 'regions.spec.ts'],
+      testIgnore: ['account.spec.ts', 'meetings.spec.ts', 'community.spec.ts', 'regions.spec.ts', 'walking.spec.ts'],
       use: { baseURL: 'http://127.0.0.1:3000' },
     },
     {
       name: 'production',
-      testIgnore: ['account.spec.ts', 'meetings.spec.ts', 'community.spec.ts', 'regions.spec.ts'],
+      testIgnore: ['account.spec.ts', 'meetings.spec.ts', 'community.spec.ts', 'regions.spec.ts', 'walking.spec.ts'],
       use: { baseURL: 'http://127.0.0.1:3002' },
     },
     {
@@ -65,27 +65,25 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      command:
-        'MEETUP_SOURCE=fixture MEETUP_FIXTURE_PATH=contracts/fixtures/meetup.json npm run dev',
+      command: 'QA_PORT=3000 npx tsx tests/public-server.ts',
       url: 'http://127.0.0.1:3000',
       reuseExistingServer: false,
     },
     {
-      command:
-        'PORT=3002 MEETUP_SOURCE=fixture MEETUP_FIXTURE_PATH=contracts/fixtures/meetup.json npm start',
+      command: 'QA_PRODUCTION=1 QA_PORT=3002 npx tsx tests/public-server.ts',
       url: 'http://127.0.0.1:3002',
       reuseExistingServer: false,
     },
     {
       command:
         'PORT=3003 MEETUP_SOURCE=fixture MEETUP_FIXTURE_PATH=contracts/fixtures/malicious.json npm run dev',
-      url: 'http://127.0.0.1:3003',
+      url: 'http://127.0.0.1:3003/health/live',
       reuseExistingServer: false,
     },
     {
       command:
         'PORT=3004 MEETUP_SOURCE=fixture MEETUP_FIXTURE_PATH=contracts/fixtures/malicious.json npm start',
-      url: 'http://127.0.0.1:3004',
+      url: 'http://127.0.0.1:3004/health/live',
       reuseExistingServer: false,
     },
   ],

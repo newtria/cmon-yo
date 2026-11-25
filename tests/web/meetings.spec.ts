@@ -75,6 +75,15 @@ test('Web create, edit, join, leave, host cancel, response recovery, private swi
   const path = new URL(page.url()).pathname;
   await page.getByRole('button', { name: '모임 수정', exact: true }).click();
   await page.getByLabel('제목', { exact: true }).fill(title + ' 수정');
+  // A failed foreground identity check clears private queries. The edit draft
+  // must remain hidden in place until this same account is verified again.
+  await page.route('**/api/v1/me', (route) => route.fulfill({ status: 503 }));
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('region', { name: '모임 수정 양식' })).toBeHidden();
+  await expect(page.getByRole('button', { name: '계정 다시 확인', exact: true })).toBeVisible();
+  await page.unroute('**/api/v1/me');
+  await page.getByRole('button', { name: '계정 다시 확인', exact: true }).click();
+  await expect(page.getByLabel('제목', { exact: true })).toHaveValue(title + ' 수정');
   await page.getByRole('button', { name: '수정 저장' }).click();
   await expect(page.getByRole('heading', { name: title + ' 수정', exact: true })).toBeVisible();
   const guestContext = await browser.newContext({
@@ -155,4 +164,32 @@ test('Web create, edit, join, leave, host cancel, response recovery, private swi
   expect(await page.locator('vite-error-overlay').count()).toBe(0);
   await other.close();
   await guestContext.close();
+});
+
+test('an old SSR document cannot erase the newly signed-in account draft', async ({
+  page, request, baseURL,
+}) => {
+  const first = await account(request, baseURL!, '이전 계정');
+  const next = await account(request, baseURL!, '현재 계정');
+  await page.goto('/account');
+  await login(page, first);
+  await expect(page.getByRole('button', { name: '로그아웃', exact: true })).toBeVisible();
+  const staleResponse = await page.request.get('/meetups/new');
+  expect(staleResponse.ok()).toBe(true);
+  const staleHTML = await staleResponse.text();
+  await page.getByRole('button', { name: '로그아웃', exact: true }).click();
+  await login(page, next);
+  await expect(page.getByRole('button', { name: '로그아웃', exact: true })).toBeVisible();
+  await page.goto('/community/new');
+  const title = '현재 계정의 보존할 초안 ' + randomUUID();
+  await page.getByLabel('제목', { exact: true }).fill(title);
+  await page.route('**/meetups/new', (route) => route.fulfill({
+    status: 200, contentType: 'text/html', body: staleHTML,
+  }), { times: 1 });
+  await page.goto('/meetups/new');
+  // Revalidation reloads the stale document with the current cookie identity.
+  await expect(page.getByRole('region', { name: '모임 작성 양식' })).toBeVisible();
+  await expect(page.getByLabel('제목', { exact: true })).toBeEnabled();
+  await page.goto('/community/new');
+  await expect(page.getByLabel('제목', { exact: true })).toHaveValue(title);
 });

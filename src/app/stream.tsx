@@ -80,6 +80,7 @@ export function receiveStream(state: StreamState): StreamResources {
   });
   function dispose() {
     observer.disconnect();
+    document.removeEventListener('readystatechange', deliver);
     waiting.clear();
     if (stream?.id === state.id) {
       stream.receive = undefined;
@@ -91,7 +92,9 @@ export function receiveStream(state: StreamState): StreamResources {
   function deliver() {
     for (const [slot, packet] of waiting) {
       const element = document.querySelector(`script[data-cmon-stream="${slot}"]`);
-      if (!element?.isConnected || element.closest('[hidden]')) continue;
+      // If a client render replaced the boundary, the packet can still seed it
+      // once the server HTML has finished parsing.
+      if (element?.closest('[hidden]') || (!element && document.readyState === 'loading')) continue;
       resolvers.get(slot)?.(packet);
       resolvers.delete(slot);
       waiting.delete(slot);
@@ -101,6 +104,7 @@ export function receiveStream(state: StreamState): StreamResources {
       dispose();
     }
   }
+  document.addEventListener('readystatechange', deliver);
   const timer = setTimeout(() => {
     for (const [slot, resolve] of resolvers)
       resolve({ slot, state: { queries: [], mutations: [] }, failed: true });

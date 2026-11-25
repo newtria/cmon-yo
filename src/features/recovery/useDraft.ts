@@ -1,14 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import type { z } from 'zod';
 import { readRecovery, writeRecovery, removeRecovery } from './storage';
+import { ViewerVerification } from '../account/ViewerVerification';
 
 export function useDraft<T>(userId: string, scope: string, initial: T, schema: z.ZodType<T>) {
+  const verified = useContext(ViewerVerification);
   const [value, setValue] = useState(initial);
   const [hydrated, setHydrated] = useState(false);
   const [message, setMessage] = useState('');
   const defaults = useRef(initial),
     validator = useRef(schema);
   useEffect(() => {
+    if (!verified) {
+      setHydrated(false);
+      return;
+    }
     // AccountBoundary establishes the owner before enabling any input.
     try {
       const saved = readRecovery(userId, scope, validator.current);
@@ -20,7 +26,7 @@ export function useDraft<T>(userId: string, scope: string, initial: T, schema: z
       setMessage('임시 저장을 사용할 수 없습니다. 화면을 떠나기 전에 내용을 복사해 주세요.');
     }
     setHydrated(true);
-  }, [userId, scope]);
+  }, [userId, scope, verified]);
   function update(next: T) {
     setValue(next);
     try {

@@ -1,95 +1,19 @@
 import { useSearchParams } from 'react-router';
 import { RegionSelect } from './RegionSelect';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  placeKey,
-  weatherKey,
-  placesKey,
-  placeListKey,
-  placeFiltersSchema,
-  placeSourceURL,
-  favoritePlacesKey,
-  type Weather,
-  type Place,
-} from '../../contracts/place';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { placeListKey, placeFiltersSchema, placeSourceURL } from '../../contracts/place';
 import { publicAPI } from '../../api/public';
-import { displayDate } from '../../contracts/date';
 import * as css from '../meetup/meetup.css';
-import { StreamSlot } from '../../app/stream';
 import { AppLink } from '../../app/navigation';
 import { ProductNav } from '../../app/ProductNav';
 import { Icon } from '../../app/Icon';
 import { FacilityMap } from './FacilityMap';
 import * as mapCSS from './places.css';
-
-function FacilityInfo({ place }: { place: Place }) {
-  return (
-    <>
-      <p>
-        {place.kind} · {place.address}
-      </p>
-      <p>
-        {place.exerciseFacilities.length
-          ? place.exerciseFacilities.join(' · ')
-          : '운동시설 정보 미제공'}
-      </p>
-      <p className={css.note}>
-        공공데이터 기준일 {place.sourceDate}. 현재 이용 가능 여부는 현장과 다를 수 있습니다.
-      </p>
-    </>
-  );
-}
-function WeatherInfo({ weather, refreshFailed }: { weather: Weather; refreshFailed: boolean }) {
-  if (weather.status === 'unavailable')
-    return (
-      <section aria-label="날씨">
-        <h2>단기예보</h2>
-        <p>날씨를 불러오지 못했습니다. 다시 시도해 주세요.</p>
-      </section>
-    );
-  const facts = weather.facts;
-  return (
-    <section aria-label="날씨">
-      <h2>단기예보</h2>
-      <p>
-        {weather.status === 'stale' || refreshFailed
-          ? '날씨 갱신에 실패했습니다. 이전에 받은 예보입니다.'
-          : '최근에 받은 예보입니다.'}
-      </p>
-      <dl>
-        <dt>예보 대상 · 한국 시간</dt>
-        <dd>{displayDate(facts.validAt)}</dd>
-        <dt>기온</dt>
-        <dd>{facts.temperatureC === null ? '정보 없음' : `${facts.temperatureC} °C`}</dd>
-        <dt>강수확률</dt>
-        <dd>
-          {facts.precipitationProbabilityPercent === null
-            ? '정보 없음'
-            : `${facts.precipitationProbabilityPercent} %`}
-        </dd>
-        <dt>강수형태</dt>
-        <dd>
-          {
-            { none: '없음', rain: '비', snow: '눈', mixed: '비/눈', unknown: '정보 없음' }[
-              facts.precipitationType
-            ]
-          }
-        </dd>
-        <dt>풍속</dt>
-        <dd>
-          {facts.windSpeedMetersPerSecond === null
-            ? '정보 없음'
-            : `${facts.windSpeedMetersPerSecond} m/s`}
-        </dd>
-      </dl>
-      <p className={css.note}>
-        기상청 발표 {displayDate(facts.issuedAt)} · 조회 {displayDate(facts.fetchedAt)}
-      </p>
-    </section>
-  );
-}
-export function PlacesPage({ id }: { id?: string }) {
+import { usePlaceFavorites } from './usePlaceFavorites';
+import { FacilityRefresh } from './FacilityRefresh';
+import { PlaceDetail } from './PlaceDetail';
+export function PlacesPage({ id, userId, ready }: { id?: string; userId: string | null; ready: boolean }) {
   return (
     <>
       <ProductNav />
@@ -98,7 +22,13 @@ export function PlacesPage({ id }: { id?: string }) {
         tabIndex={-1}
         className={[css.page, id ? '' : mapCSS.explorePage].join(' ')}
       >
-        {id ? <PlaceDetail id={id} /> : <PlaceList />}
+        {!ready ? (
+          <p role="status">
+            계정을 확인하는 중입니다.{' '}
+            <button onClick={() => window.dispatchEvent(new Event('focus'))}>계정 다시 확인</button>
+          </p>
+        ) : null}
+        {id ? <PlaceDetail id={id} userId={userId} ready={ready} /> : <PlaceList userId={userId} ready={ready} />}
         <footer className={css.footer}>
           <p>선택한 동네의 공공시설 · 공개 자료에 기반한 시설 정보입니다.</p>
           <p>
@@ -110,31 +40,20 @@ export function PlacesPage({ id }: { id?: string }) {
     </>
   );
 }
-function PlaceList() {
+function PlaceList({ userId, ready }: { userId: string | null; ready: boolean }) {
   const [params, setParams] = useSearchParams();
-  const client = useQueryClient();
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [favoriteBusy, setFavoriteBusy] = useState<string | null>(null);
-  const [favoriteMessage, setFavoriteMessage] = useState('');
-  const [deviceLocation, setDeviceLocation] = useState<{
-    latitude: number;
-    longitude: number;
-  } | null>(null);
   const parsedFilters = placeFiltersSchema.safeParse(
     Object.fromEntries([...params].filter(([, value]) => value !== '')),
   );
   const filters = parsedFilters.success ? parsedFilters.data : { page: 0 };
-  const queryFilters =
-    filters.regionCode || !deviceLocation
-      ? filters
-      : { ...filters, latitude: deviceLocation.latitude, longitude: deviceLocation.longitude };
   const query = useQuery({
     enabled: parsedFilters.success,
-    queryKey: placeListKey(queryFilters),
+    queryKey: placeListKey(filters),
     staleTime: 60_000,
     retry: false,
-    queryFn: ({ signal }) => publicAPI.places(signal, queryFilters),
+    queryFn: ({ signal }) => publicAPI.places(signal, filters),
   });
   const visiblePlaces = useMemo(
     () =>
@@ -145,39 +64,12 @@ function PlaceList() {
       ),
     [query.data?.places, search],
   );
-  const favorites = useQuery({
-    queryKey: favoritePlacesKey,
-    retry: false,
-    queryFn: ({ signal }) => publicAPI.favoritePlaces(signal),
-  });
-  const favoriteIds = new Set(favorites.data?.placeIds ?? []);
-  async function toggleFavorite(id: string) {
-    if (favorites.data === null || favorites.isError) {
-      setFavoriteMessage('찜하려면 로그인해 주세요.');
-      return;
-    }
-    if (favoriteBusy) return;
-    const favorite = !favoriteIds.has(id);
-    setFavoriteBusy(id);
-    setFavoriteMessage('');
-    try {
-      await publicAPI.setFavorite(id, favorite, new AbortController().signal);
-      client.setQueryData(
-        favoritePlacesKey,
-        (current: { placeIds: string[] } | null | undefined) => ({
-          placeIds: favorite
-            ? Array.from(new Set([...(current?.placeIds ?? []), id]))
-            : (current?.placeIds ?? []).filter((placeId) => placeId !== id),
-        }),
-      );
-    } catch (error) {
-      setFavoriteMessage(
-        error instanceof Error ? error.message : '찜을 저장하지 못했습니다. 다시 시도해 주세요.',
-      );
-    } finally {
-      setFavoriteBusy(null);
-    }
-  }
+  const favorites = usePlaceFavorites(userId, ready);
+  const pageURL = (page: number) => {
+    const next = new URLSearchParams(params);
+    next.set('page', String(page));
+    return '/places?' + next;
+  };
   const selected = visiblePlaces.find((place) => place.id === selectedId);
   const selectedCard = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -219,7 +111,11 @@ function PlaceList() {
         <p>이전에 불러온 목록입니다. 최신 정보를 확인하지 못했습니다.</p>
       ) : null}
       {query.data?.places.length === 0 ? <p>등록된 시설 정보가 없습니다.</p> : null}
-      {favoriteMessage ? <p role="alert">{favoriteMessage}</p> : null}
+      {favorites.message ? <p role="alert">{favorites.message}</p> : null}
+      {favorites.accountAction ? <AppLink href={favorites.accountHref}>{favorites.accountAction}</AppLink> : null}
+      {favorites.canRetry ? (
+        <button disabled={favorites.retrying} onClick={() => void favorites.retry()}>찜 목록 다시 조회</button>
+      ) : null}
       <div className={mapCSS.layout}>
         <div className={mapCSS.mapColumn}>
           {query.data?.places.length ? (
@@ -227,7 +123,13 @@ function PlaceList() {
               places={visiblePlaces}
               selectedId={selected?.id ?? null}
               onSelect={setSelectedId}
-              onLocation={setDeviceLocation}
+              queryLocation={filters.latitude != null && filters.longitude != null
+                ? { latitude: filters.latitude, longitude: filters.longitude }
+                : undefined}
+              onLocation={({ latitude, longitude }) => {
+                setSelectedId(null);
+                setParams({ latitude: String(latitude), longitude: String(longitude) });
+              }}
             />
           ) : null}
           {query.data?.places.length ? (
@@ -255,12 +157,12 @@ function PlaceList() {
                 </AppLink>
                 <button
                   className={mapCSS.favorite}
-                  aria-pressed={favoriteIds.has(selected.id)}
-                  aria-label={favoriteIds.has(selected.id) ? '찜 해제' : '찜하기'}
-                  disabled={favoriteBusy === selected.id || favorites.isPending}
-                  onClick={() => void toggleFavorite(selected.id)}
+                  aria-pressed={favorites.known ? favorites.ids.has(selected.id) : undefined}
+                  aria-label={!favorites.known ? '찜 상태 확인' : favorites.ids.has(selected.id) ? '찜 해제' : '찜하기'}
+                  disabled={favorites.disabled}
+                  onClick={() => void favorites.toggle(selected.id)}
                 >
-                  <Icon name="heart" /> {favoriteIds.has(selected.id) ? '찜 해제' : '찜하기'}
+                  <Icon name="heart" /> {!favorites.known ? '찜 상태 확인' : favorites.ids.has(selected.id) ? '찜 해제' : '찜하기'}
                 </button>
               </div>
             </div>
@@ -296,14 +198,14 @@ function PlaceList() {
                 </button>
                 <button
                   className={mapCSS.favorite}
-                  aria-pressed={favoriteIds.has(place.id)}
+                  aria-pressed={favorites.known ? favorites.ids.has(place.id) : undefined}
                   aria-label={
-                    favoriteIds.has(place.id) ? `${place.name} 찜 해제` : `${place.name} 찜하기`
+                    !favorites.known ? `${place.name} 찜 상태 확인` : favorites.ids.has(place.id) ? `${place.name} 찜 해제` : `${place.name} 찜하기`
                   }
-                  disabled={favoriteBusy === place.id || favorites.isPending}
-                  onClick={() => void toggleFavorite(place.id)}
+                  disabled={favorites.disabled}
+                  onClick={() => void favorites.toggle(place.id)}
                 >
-                  <Icon name="heart" /> {favoriteIds.has(place.id) ? '찜 해제' : '찜하기'}
+                  <Icon name="heart" /> {!favorites.known ? '찜 상태 확인' : favorites.ids.has(place.id) ? '찜 해제' : '찜하기'}
                 </button>
               </li>
             ))}
@@ -315,28 +217,12 @@ function PlaceList() {
       </div>
       <p role="status">{query.isFetching ? '시설을 불러오는 중…' : ''}</p>
       {filters.page > 0 ? (
-        <AppLink
-          href={
-            '/places?' +
-            new URLSearchParams({
-              regionCode: filters.regionCode ?? '',
-              page: String(filters.page - 1),
-            })
-          }
-        >
+        <AppLink href={pageURL(filters.page - 1)}>
           이전 시설 페이지
         </AppLink>
       ) : null}
       {query.data?.nextPage != null ? (
-        <AppLink
-          href={
-            '/places?' +
-            new URLSearchParams({
-              regionCode: filters.regionCode ?? '',
-              page: String(query.data.nextPage),
-            })
-          }
-        >
+        <AppLink href={pageURL(query.data.nextPage)}>
           다음 시설 페이지
         </AppLink>
       ) : null}
@@ -346,171 +232,5 @@ function PlaceList() {
         label={query.isError ? '다시 시도' : '시설 새로고침'}
       />
     </>
-  );
-}
-function PlaceDetail({ id }: { id: string }) {
-  const client = useQueryClient();
-  const query = useQuery({
-    queryKey: placeKey(id),
-    staleTime: 60_000,
-    retry: false,
-    // The public list already contains the complete facility record. Preserve
-    // its age so an old list cannot extend the detail's freshness indefinitely.
-    initialData: () => {
-      const place = client
-        .getQueryData<{ places: Place[] }>(placesKey)
-        ?.places.find((place) => place.id === id);
-      return place ? { place } : undefined;
-    },
-    initialDataUpdatedAt: () => client.getQueryState(placesKey)?.dataUpdatedAt,
-    queryFn: ({ signal }) => publicAPI.placeInfo(id, signal),
-  });
-  return (
-    <>
-      <AppLink href="/places">시설 목록으로 돌아가기</AppLink>
-      {query.isError ? <p role="alert">시설을 불러오지 못했습니다. 다시 시도해 주세요.</p> : null}
-      {query.data === null ? <p role="alert">시설을 찾을 수 없습니다.</p> : null}
-      {query.data && query.isError ? (
-        <p>이전에 불러온 정보입니다. 최신 정보를 확인하지 못했습니다.</p>
-      ) : null}
-      <h1>{query.data?.place.name ?? '시설 상세'}</h1>
-      {query.data ? (
-        <>
-          <FacilityInfo place={query.data.place} />
-          <div className={css.actions}>
-            <AppLink href={`/meetups?placeId=${id}`}>이 장소의 모임 보기</AppLink>
-            <AppLink className={css.primary} href={`/meetups/new?placeId=${id}`}>
-              이 장소에서 모임 만들기
-            </AppLink>
-            <FavoriteButton id={id} />
-          </div>
-          <Suspense
-            fallback={
-              <section aria-label="날씨">
-                <h2>단기예보</h2>
-                <p role="status">날씨를 불러오는 중…</p>
-              </section>
-            }
-          >
-            <StreamSlot name="weather">
-              {(packet) => <WeatherPanel id={id} failed={packet?.failed} />}
-            </StreamSlot>
-          </Suspense>
-        </>
-      ) : null}
-      <p role="status">{query.isFetching ? '시설을 불러오는 중…' : ''}</p>
-      <FacilityRefresh
-        loading={query.isFetching}
-        refresh={() => void query.refetch()}
-        label="시설 새로고침"
-      />
-    </>
-  );
-}
-
-function FavoriteButton({ id }: { id: string }) {
-  const client = useQueryClient();
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-  const favorites = useQuery({
-    queryKey: favoritePlacesKey,
-    retry: false,
-    queryFn: ({ signal }) => publicAPI.favoritePlaces(signal),
-  });
-  const isFavorite = favorites.data?.placeIds.includes(id) ?? false;
-  async function toggle() {
-    if (favorites.data === null || favorites.isError) {
-      setMessage('찜하려면 로그인해 주세요.');
-      return;
-    }
-    if (busy) return;
-    setBusy(true);
-    setMessage('');
-    try {
-      const next = await publicAPI.setFavorite(id, !isFavorite, new AbortController().signal);
-      client.setQueryData(
-        favoritePlacesKey,
-        (current: { placeIds: string[] } | null | undefined) => ({
-          placeIds: next.favorite
-            ? Array.from(new Set([...(current?.placeIds ?? []), id]))
-            : (current?.placeIds ?? []).filter((placeId) => placeId !== id),
-        }),
-      );
-    } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : '찜을 저장하지 못했습니다. 다시 시도해 주세요.',
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <>
-      <button
-        className={mapCSS.favorite}
-        aria-pressed={isFavorite}
-        aria-label={isFavorite ? '찜 해제' : '찜하기'}
-        disabled={busy || favorites.isPending}
-        onClick={() => void toggle()}
-      >
-        <Icon name="heart" /> {isFavorite ? '찜 해제' : '찜하기'}
-      </button>
-      {message ? <p role="alert">{message}</p> : null}
-    </>
-  );
-}
-
-function WeatherPanel({ id, failed = false }: { id: string; failed?: boolean }) {
-  const query = useQuery({
-    queryKey: weatherKey(id),
-    staleTime: 60_000,
-    retry: false,
-    enabled: !failed,
-    queryFn: ({ signal }) => publicAPI.weather(id, signal),
-  });
-  return (
-    <div aria-label="날씨 상태">
-      {query.data ? (
-        <WeatherInfo weather={query.data.weather} refreshFailed={query.isError} />
-      ) : (
-        <section aria-label="날씨">
-          <h2>단기예보</h2>
-          <p role="status">
-            {query.isFetching
-              ? '날씨를 불러오는 중…'
-              : '날씨를 불러오지 못했습니다. 다시 시도해 주세요.'}
-          </p>
-        </section>
-      )}
-      {query.data && query.isFetching ? <p role="status">날씨를 갱신하는 중…</p> : null}
-      <button
-        aria-disabled={query.isFetching}
-        onClick={() => {
-          if (!query.isFetching) void query.refetch();
-        }}
-      >
-        날씨 다시 조회
-      </button>
-    </div>
-  );
-}
-
-// Hydration readiness belongs to the control. Updating an ancestor while a
-// sibling Suspense boundary is dehydrated would discard its pending HTML.
-function FacilityRefresh({
-  loading,
-  refresh,
-  label,
-}: {
-  loading: boolean;
-  refresh: () => void;
-  label: string;
-}) {
-  const [ready, setReady] = useState(false);
-  useEffect(() => setReady(true), []);
-  return (
-    <button disabled={!ready || loading} onClick={refresh}>
-      {label}
-    </button>
   );
 }

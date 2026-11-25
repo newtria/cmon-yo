@@ -1,11 +1,12 @@
 import { clearRecovery } from '../recovery/storage';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useContext, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { accountKey, accountSchema, type Account } from '../../contracts/account';
 import * as css from '../meetup/meetup.css';
 import { form as formStyle } from './account.css';
 import { markIdentityChanging } from '../../app/navigation';
 import { ProductNav } from '../../app/ProductNav';
+import { ViewerVerification } from './ViewerVerification';
 
 export type AccountRoute = {
   section: 'account';
@@ -46,6 +47,7 @@ async function authAction(path: string, body: object) {
 }
 export function AccountPage({ route }: { route: AccountRoute }) {
   const client = useQueryClient();
+  const verified = useContext(ViewerVerification);
   const [mode, setMode] = useState<Mode>(route.mode);
   const [ready, setReady] = useState(false);
   const [pending, setPending] = useState(false);
@@ -65,6 +67,7 @@ export function AccountPage({ route }: { route: AccountRoute }) {
   const identityChanging = useRef(false);
   const query = useQuery<Account>({
     queryKey: accountKey(route.userId),
+    enabled: verified,
     staleTime: 30_000,
     retry: false,
     queryFn: async ({ signal }) => {
@@ -85,7 +88,7 @@ export function AccountPage({ route }: { route: AccountRoute }) {
   const user = query.isError ? null : query.data?.user;
   // SSR inputs must wait for hydration, and an outgoing account document must
   // stay locked until navigation finishes so typed values cannot be discarded.
-  const formDisabled = !ready || pending || identityChanging.current;
+  const formDisabled = !ready || !verified || pending || identityChanging.current;
   useEffect(() => {
     setReady(true);
     const controller = new AbortController();
@@ -119,7 +122,7 @@ export function AccountPage({ route }: { route: AccountRoute }) {
   }, [error]);
   async function changeIdentity(destination: string) {
     identityChanging.current = true;
-    clearRecovery();
+    clearRecovery(route.userId);
     markIdentityChanging();
     await client.cancelQueries({ queryKey: ['private'] });
     client.removeQueries({ queryKey: ['private'] });
@@ -129,7 +132,7 @@ export function AccountPage({ route }: { route: AccountRoute }) {
     window.location.assign(destination);
   }
   async function run(action: () => Promise<void>) {
-    if (pending) return;
+    if (pending || !verified) return;
     setPending(true);
     setError('');
     setMessage('');
@@ -190,7 +193,7 @@ export function AccountPage({ route }: { route: AccountRoute }) {
             </button>
           ) : null}
           {user && mode !== 'reset' ? (
-            <section aria-label="로그인한 계정">
+            <section aria-label="로그인한 계정" hidden={!verified}>
               <p>{user.name}님</p>
               <p>{user.email}</p>
               <button

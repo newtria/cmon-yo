@@ -1,3 +1,4 @@
+import { migrateDatabase } from '../migrations';
 import type pg from 'pg';
 import {
   placeDetailSchema,
@@ -30,6 +31,10 @@ export type PlaceService = {
     favorite: boolean,
   ): Promise<{ id: string; favorite: boolean }>;
 };
+
+export async function migratePlaceFavorites(pool: pg.Pool) {
+  await migrateDatabase(pool, 5);
+}
 export function databasePlaces(pool: pg.Pool | undefined, weather: WeatherService): PlaceService {
   const database = () => {
     if (!pool) throw new ServiceError(503, 'UNAVAILABLE', '시설을 불러오지 못했습니다.');
@@ -82,7 +87,8 @@ export function databasePlaces(pool: pg.Pool | undefined, weather: WeatherServic
                  cos(radians($3)) * cos(radians((document->>'latitude')::double precision)) *
                  cos(radians((document->>'longitude')::double precision) - radians($4)) +
                  sin(radians($3)) * sin(radians((document->>'latitude')::double precision))
-               )))
+               ))),
+               source_key DESC
              LIMIT 101 OFFSET $5`,
             [
               source,

@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CmonAPIBaseURL</key>
+	<string>$(CMON_API_URL)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>
@@ -25,5 +27,7 @@
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>현재 위치 주변의 운동 시설을 지도에 표시하기 위해 위치를 사용합니다.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>건강 앱의 걸음 수를 읽어 오늘의 걷기 보상과 함께하는 원정 진행도를 반영합니다.</string>
 </dict>
 </plist>

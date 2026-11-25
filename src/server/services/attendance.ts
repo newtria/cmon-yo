@@ -1,5 +1,6 @@
+import { migrateDatabase } from '../migrations';
+import { lockVerifiedAccount } from '../auth/account-lock';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import type pg from 'pg';
 import {
   attendancePolicy,
@@ -11,18 +12,7 @@ const fail = (status: number, code: string, message: string): never => {
   throw new ServiceError(status, code, message);
 };
 export async function migrateAttendance(pool: pg.Pool) {
-  const c = await pool.connect();
-  try {
-    await c.query('BEGIN');
-    await c.query('SELECT pg_advisory_xact_lock(15012893)');
-    await c.query(await readFile('db/004_attendance.sql', 'utf8'));
-    await c.query('COMMIT');
-  } catch (e) {
-    await c.query('ROLLBACK');
-    throw e;
-  } finally {
-    c.release();
-  }
+  await migrateDatabase(pool, 4);
 }
 export function databaseAttendance(pool: pg.Pool, now = () => Date.now()) {
   return {
@@ -90,6 +80,7 @@ export function databaseAttendance(pool: pg.Pool, now = () => Date.now()) {
         fingerprint = createHash('sha256').update(JSON.stringify({ id, input })).digest('hex');
       try {
         await c.query('BEGIN');
+        await lockVerifiedAccount(c, user);
         await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,4))', [user + key]);
         const old = (
           await c.query('SELECT * FROM attendance_commands WHERE user_id=$1 AND command_id=$2', [

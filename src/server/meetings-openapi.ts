@@ -1,3 +1,4 @@
+import { walkingPaths } from './walking-openapi';
 import {
   communityCommandSchema,
   profileSchema,
@@ -94,6 +95,7 @@ export const meetingsOpenapi = {
     },
   },
   paths: {
+    ...walkingPaths,
     ...openapi.paths,
     '/api/v1/me/profile': {
       get: {
@@ -264,7 +266,7 @@ export const meetingsOpenapi = {
       get: {
         operationId: 'getMembership',
         security,
-        parameters: [id],
+        parameters: [id, viewerHeader],
         responses: { 200: response(membershipSchema), ...errors },
       },
     },
@@ -272,7 +274,7 @@ export const meetingsOpenapi = {
       get: {
         operationId: 'myMeetups',
         security,
-        parameters: filters.filter((p) => p.name === 'page'),
+        parameters: [...filters.filter((p) => p.name === 'page'), viewerHeader],
         responses: { 200: response(myMeetingsSchema), ...errors },
       },
     },
@@ -280,7 +282,7 @@ export const meetingsOpenapi = {
       get: {
         operationId: 'commandResult',
         security,
-        parameters: [id],
+        parameters: [id, viewerHeader],
         responses: { 200: response(z.object({ id: idSchema.nullable() })), ...errors },
       },
     },

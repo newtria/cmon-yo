@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+// Shared by browser and Native writes. Keep legacy account reads permissive.
+export const accountNameSchema = z.string().trim().min(1).max(60)
+  .refine((value) => !value.includes('\0'));
+
 export const accountUserSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
@@ -16,7 +20,7 @@ export function accountReturnPath(value: string | null | undefined) {
   const base = 'https://return.invalid';
   try {
     const url = new URL(value, base);
-    if (url.origin !== base || !/^\/(?:places|meetups|account|community|activity)(?:\/|$)/.test(url.pathname))
+    if (url.origin !== base || !/^\/(?:places|meetups|account|community|activity|quests)(?:\/|$)/.test(url.pathname))
       return '/account';
     return url.pathname + url.search;
   } catch {

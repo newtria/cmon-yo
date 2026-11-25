@@ -165,14 +165,12 @@ function CommunityContent({ route, ready }: { route: CommunityRoute; ready: bool
                 onSubmit={(e) => {
                   e.preventDefault();
                   const d = new FormData(e.currentTarget);
-                  nav(
-                    loc.pathname +
-                      '?' +
-                      new URLSearchParams({
-                        sport: String(d.get('sport') ?? ''),
-                        regionCode: String(d.get('regionCode') ?? ''),
-                      }),
-                  );
+                  const next = new URLSearchParams();
+                  for (const key of ['regionCode', 'sport']) {
+                    const value = String(d.get(key) ?? '');
+                    if (value) next.set(key, value);
+                  }
+                  nav(loc.pathname + (next.size ? '?' + next : ''));
                 }}
               >
                 <RegionSelect
